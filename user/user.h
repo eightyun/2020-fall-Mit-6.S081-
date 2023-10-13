@@ -1,5 +1,6 @@
 struct stat;
 struct rtcdate;
+struct sysinfo;
 
 // system calls
 int fork(void);
@@ -23,6 +24,8 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int trace(int);  // 新系统调用trace的函数原型签名
+int sysinfo(struct sysinfo *);  // 新系统调用sysinfo的函数原型签名
 
 // ulib.c
 int stat(const char*, struct stat*);
