@@ -5,11 +5,12 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-
+  // 名称以kvm开头的函数操作内核页表；以uvm开头的函数操作用户页表
 /*
  * the kernel's page table.
  */
-pagetable_t kernel_pagetable;
+pagetable_t kernel_pagetable;   // 它实际上是指向RISC-V根页表页的指针一个pagetable_t可
+                                // 可以是内核页表，也可以是一个进程页表
 
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
@@ -19,7 +20,7 @@ extern char trampoline[]; // trampoline.S
  * create a direct-map page table for the kernel.
  */
 void
-kvminit()
+kvminit()  // kvminit以使用 kvmmake创建内核的页表。此调用发生在 xv6 启用 RISC-V 上的分页之前，因此地址直接引用物理内存
 {
   kernel_pagetable = (pagetable_t) kalloc();
   memset(kernel_pagetable, 0, PGSIZE);
@@ -50,7 +51,7 @@ kvminit()
 // Switch h/w page table register to the kernel's page table,
 // and enable paging.
 void
-kvminithart()
+kvminithart()  //来安装内核页表
 {
   w_satp(MAKE_SATP(kernel_pagetable));
   sfence_vma();
@@ -69,7 +70,7 @@ kvminithart()
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
 pte_t *
-walk(pagetable_t pagetable, uint64 va, int alloc)
+walk(pagetable_t pagetable, uint64 va, int alloc)  // 为虚拟地址找到PTE
 {
   if(va >= MAXVA)
     panic("walk");
@@ -115,8 +116,8 @@ walkaddr(pagetable_t pagetable, uint64 va)
 // only used when booting.
 // does not flush TLB or enable paging.
 void
-kvmmap(uint64 va, uint64 pa, uint64 sz, int perm)
-{
+kvmmap(uint64 va, uint64 pa, uint64 sz, int perm) //kvmmap调用mappages，mappages将范围虚拟地址到同等
+{                                      //范围物理地址的映射装载到一个页表中。
   if(mappages(kernel_pagetable, va, sz, pa, perm) != 0)
     panic("kvmmap");
 }
@@ -146,7 +147,7 @@ kvmpa(uint64 va)
 // be page-aligned. Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
 int
-mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)  // 为新映射装载PTE
 {
   uint64 a, last;
   pte_t *pte;
@@ -172,7 +173,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 // Optionally free the physical memory.
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
-{
+{                       // uvmunmap使用walk来查找对应的PTE，并使用kfree来释放PTE引用的物理内存。
   uint64 a;
   pte_t *pte;
 
@@ -226,8 +227,8 @@ uvminit(pagetable_t pagetable, uchar *src, uint sz)
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 uint64
-uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
-{
+uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz) 
+{                   // 用kalloc分配物理内存，并用mappages将PTE添加到用户页表中
   char *mem;
   uint64 a;
 
@@ -352,7 +353,7 @@ uvmclear(pagetable_t pagetable, uint64 va)
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
 int
-copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len) //复制数据到用户虚拟地址
 {
   uint64 n, va0, pa0;
 
@@ -377,7 +378,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 // Copy len bytes to dst from virtual address srcva in a given page table.
 // Return 0 on success, -1 on error.
 int
-copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len) // 从用户虚拟地址复制数据
 {
   uint64 n, va0, pa0;
 

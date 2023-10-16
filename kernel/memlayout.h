@@ -1,4 +1,4 @@
-// Physical memory layout
+// Physical memory layout           明了xv6内核内存布局的常量。
 
 // qemu -machine virt is set up like this,
 // based on qemu's hw/riscv/virt.c:

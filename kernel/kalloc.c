@@ -24,10 +24,10 @@ struct {
 } kmem;
 
 void
-kinit()
+kinit() // 初始化分配器。kinit初始化空闲列表以保存从内核结束到PHYSTOP之间的每一页
 {
   initlock(&kmem.lock, "kmem");
-  freerange(end, (void*)PHYSTOP);
+  freerange(end, (void*)PHYSTOP); //将内存添加到空闲列表中
 }
 
 void

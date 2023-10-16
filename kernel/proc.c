@@ -23,7 +23,7 @@ extern char trampoline[]; // trampoline.S
 
 // initialize the proc table at boot time.
 void
-procinit(void)
+procinit(void) //为每个进程分配一个内核栈。它将每个栈映射到KSTACK生成的虚拟地址，这为无效的栈保护页面留下了空间
 {
   struct proc *p;
   
