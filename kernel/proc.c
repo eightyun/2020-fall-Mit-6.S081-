@@ -74,7 +74,8 @@ myproc(void) {
 }
 
 int
-allocpid() {
+allocpid() 
+{
   int pid;
   
   acquire(&pid_lock);
@@ -108,18 +109,41 @@ found:
   p->pid = allocpid();
 
   // Allocate a trapframe page.
-  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
+  if((p->trapframe = (struct trapframe *)kalloc()) == 0)
+  {
     release(&p->lock);
     return 0;
   }
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
-  if(p->pagetable == 0){
+  if(p->pagetable == 0)
+  {
     freeproc(p);
     release(&p->lock);
     return 0;
   }
+
+  // Allocate the per-process kernel page table
+  // 为这个进程分配并初始化一个新的专属内核页
+  p->pkpagetable = ukvminit();
+  if(p->pkpagetable == 0) 
+  {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+   // remap the kernel stack page per process
+  // physical address is already allocated in procinit()
+  // 每个kernel stack的虚拟地址va是已经提前决定好的 直接算出它对应的pa
+  // 然后把这个映射加入到新的专属内核页里
+  uint64 va = KSTACK((int) (p - proc));
+  pte_t pa = kvmpa(va);
+  memset((void *)pa, 0, PGSIZE); // 刷新清空kernel stack
+  ukvmmap(p->pkpagetable, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -150,6 +174,15 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  if (p->pkpagetable) 
+  {
+    ukvmfreeproc(p);
+    p->pkpagetable = 0;
+  }
+
+  if (p->kstack) 
+    p->kstack = 0;
 }
 
 // Create a user page table for a given process,
@@ -221,6 +254,8 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+   copypage_u2ukvm(p->pagetable, p->pkpagetable, 0, p->sz);
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -242,13 +277,23 @@ growproc(int n)
   struct proc *p = myproc();
 
   sz = p->sz;
-  if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+  if(n > 0)
+  {
+    if(sz + n > PLIC || (sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) 
       return -1;
-    }
-  } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+
+    if(copypage_u2ukvm(p->pagetable, p->pkpagetable , p->sz , sz)) // 同步
+      return -1 ;  
   }
+
+  else if(n < 0)
+  {
+    sz = uvmdealloc(p->pagetable, sz, sz + n);
+
+    if(p->sz != sz)
+      uvmunmap(p->pkpagetable, PGROUNDUP(sz), (PGROUNDUP(p->sz) - PGROUNDUP(sz)) / PGSIZE, 0); // 同步
+  }
+
   p->sz = sz;
   return 0;
 }
@@ -263,17 +308,25 @@ fork(void)
   struct proc *p = myproc();
 
   // Allocate process.
-  if((np = allocproc()) == 0){
+  if((np = allocproc()) == 0)
     return -1;
-  }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0)
+  {
     freeproc(np);
     release(&np->lock);
     return -1;
   }
+
   np->sz = p->sz;
+
+  if (copypage_u2ukvm(np->pagetable , np->pkpagetable , 0 , np->sz) != 0) 
+  {
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   np->parent = p;
 
@@ -287,6 +340,7 @@ fork(void)
   for(i = 0; i < NOFILE; i++)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
+
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
@@ -460,23 +514,35 @@ scheduler(void)
   struct cpu *c = mycpu();
   
   c->proc = 0;
-  for(;;){
+  for(;;)
+  {
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
     
     int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
+    for(p = proc; p < &proc[NPROC]; p++) 
+    {
       acquire(&p->lock);
-      if(p->state == RUNNABLE) {
+      if(p->state == RUNNABLE) 
+      {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        // 切换到要马上运行的新进程的内核页表
+        w_satp(MAKE_SATP(p->pkpagetable));
+        sfence_vma();
+
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
+
+        // 切换回全局内核页表
+        kvminithart();
+        
         c->proc = 0;
 
         found = 1;
@@ -484,7 +550,8 @@ scheduler(void)
       release(&p->lock);
     }
 #if !defined (LAB_FS)
-    if(found == 0) {
+    if(found == 0) 
+    {
       intr_on();
       asm volatile("wfi");
     }

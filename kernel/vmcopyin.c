@@ -31,8 +31,9 @@ copyin_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
   struct proc *p = myproc();
 
-  if (srcva >= p->sz || srcva+len >= p->sz || srcva+len < srcva)
-    return -1;
+  if (srcva >= p->sz || srcva+len >= p->sz || srcva+len < srcva) // srcva+len < srcva 检查操作是否溢出。
+    return -1;                          //如果 len 的值太大，加上 srcva 可能会导致整数溢出，从而产生非法地址
+
   memmove((void *) dst, (void *)srcva, len);
   stats.ncopyin++;   // XXX lock
   return 0;

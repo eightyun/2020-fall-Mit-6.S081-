@@ -5,12 +5,14 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-  // 名称以kvm开头的函数操作内核页表；以uvm开头的函数操作用户页表
+#include "spinlock.h"
+#include "proc.h"
+  // 名称以kvm开头的函数操作内核页表；以uvm开头的函数操作用户页表 , ukvm开头的函数操作用户的内核页表
 /*
  * the kernel's page table.
  */
 pagetable_t kernel_pagetable;   // 它实际上是指向RISC-V根页表页的指针一个pagetable_t可
-                                // 可以是内核页表，也可以是一个进程页表
+                               // 可以是内核页表，也可以是一个进程页表
 
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
@@ -154,7 +156,9 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)  //
 
   a = PGROUNDDOWN(va);
   last = PGROUNDDOWN(va + size - 1);
-  for(;;){
+
+  for(;;)
+  {
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
     if(*pte & PTE_V)
@@ -165,6 +169,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)  //
     a += PGSIZE;
     pa += PGSIZE;
   }
+
   return 0;
 }
 
@@ -379,24 +384,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len) //复制数�
 // Return 0 on success, -1 on error.
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len) // 从用户虚拟地址复制数据
-{
-  uint64 n, va0, pa0;
-
-  while(len > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > len)
-      n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
-
-    len -= n;
-    dst += n;
-    srcva = va0 + PGSIZE;
-  }
-  return 0;
+{                                        // srcva 源虚拟地址
+  return copyin_new(pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -406,38 +395,214 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len) // 从用户�
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
-  int got_null = 0;
+   return copyinstr_new(pagetable, dst, srcva, max);
+}
 
-  while(got_null == 0 && max > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > max)
-      n = max;
+void
+vmprint_helper(pagetable_t pagetable, int depth) 
+{
+  static char* indent[] = 
+  {
+      "",
+      "..",
+      ".. ..",
+      ".. .. .."
+  };
 
-    char *p = (char *) (pa0 + (srcva - va0));
-    while(n > 0){
-      if(*p == '\0'){
-        *dst = '\0';
-        got_null = 1;
-        break;
-      } else {
-        *dst = *p;
+  if (depth <= 0 || depth >= 4) 
+    panic("vmprint_helper: depth not in {1, 2, 3}");
+  
+  // there are 2^9 = 512 PTES in a page table.
+  for (int i = 0; i < 512; i++) 
+  {
+    pte_t pte = pagetable[i];
+
+    if (pte & PTE_V) 
+    {             //是一个有效的PTE
+      printf("%s%d: pte %p pa %p\n", indent[depth], i, pte, PTE2PA(pte));
+
+      if ((pte & (PTE_R|PTE_W|PTE_X)) == 0) 
+      {
+                  // points to a lower-level page table 并且是间接层PTE
+        uint64 child = PTE2PA(pte);
+        vmprint_helper((pagetable_t)child, depth+1); // 递归, 深度+1
       }
-      --n;
-      --max;
-      p++;
-      dst++;
     }
+  }
+}
 
-    srcva = va0 + PGSIZE;
+// Utility func to print the valid
+// PTEs within a page table recursively
+void
+vmprint(pagetable_t pagetable) 
+{
+  printf("page table %p\n", pagetable);
+  vmprint_helper(pagetable, 1);
+}
+
+// add a mapping to the per-process kernel page table.
+void
+ukvmmap(pagetable_t pkpagetable, uint64 va, uint64 pa, uint64 sz, int perm)
+{
+  if(mappages(pkpagetable, va, sz, pa, perm) != 0)
+    panic("ukvmmap");
+}
+
+pagetable_t
+ukvminit()
+{
+  pagetable_t pkpagetable = (pagetable_t) kalloc();
+  if (pkpagetable == 0) 
+    return pkpagetable;
+  
+  memset(pkpagetable, 0, PGSIZE);
+  // 把固定的常数映射照旧搬运过来
+  // uart registers
+  ukvmmap(pkpagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+  // virtio mmio disk interface
+  ukvmmap(pkpagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+  // CLINT
+  ukvmmap(pkpagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+  // PLIC
+  ukvmmap(pkpagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+  // map kernel text executable and read-only.
+  ukvmmap(pkpagetable, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+  // map kernel data and the physical RAM we'll make use of.
+  ukvmmap(pkpagetable, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  ukvmmap(pkpagetable, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  return pkpagetable;
+}
+
+// Unmap the leaf node mapping
+// of the per-process kernel page table
+// so that we could call freewalk on that
+void
+ukvmunmap(pagetable_t pagetable, uint64 va, uint64 npages)
+{
+  uint64 a;
+  pte_t *pte;
+
+  if((va % PGSIZE) != 0)
+    panic("ukvmunmap: not aligned");
+
+  for(a = va; a < va + npages*PGSIZE; a += PGSIZE)
+  {
+    if((pte = walk(pagetable, a, 0)) == 0)
+      goto clean;
+    if((*pte & PTE_V) == 0)
+      goto clean;
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("ukvmunmap: not a leaf");
+
+    clean:
+      *pte = 0;
   }
-  if(got_null){
-    return 0;
-  } else {
+}
+
+// Recursively free page-table pages similar to freewalk
+// not need to already free leaf node
+// 和freewalk一模一样, 除了不再出panic错当一个page的leaf还没被清除掉
+// 因为当我们free pagetable和kpagetable的时候
+// 只有1份物理地址, 且原本free pagetable的函数会负责清空它们
+// 所以这个函数只需要把在kpagetable里所有间接mapping清除即可
+void
+ukvmfreewalk(pagetable_t pagetable)
+{
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++)
+  {
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0)
+    {
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      ukvmfreewalk((pagetable_t)child);
+      pagetable[i] = 0;
+    }
+    pagetable[i] = 0;
+  }
+  kfree((void*)pagetable);
+}
+
+// helper function to first free all leaf mapping
+// of a per-process kernel table but do not free the physical address
+// and then remove all 3-levels indirection and the physical address
+// for this kernel page itself
+void 
+ukvmfreeproc(struct proc * p) //  在销毁一个进程时, 回收它的内核页表. 这里需要注意的是, 我们并不需要去回收内核页表所映射到的物理地址
+{                             // 因为那些物理地址, 例如device mapping, 是全局共享的. 进程专属内核表只是全局内核表的一个复制. 但是间接映射所消耗分配的物理内存是需要回收的
+  pagetable_t pkpagetable = p->pkpagetable;
+  // reverse order of allocation
+  // 按分配顺序的逆序来销毁映射, 但不回收物理地址
+  ukvmunmap(pkpagetable, p->kstack, PGSIZE/PGSIZE);
+  ukvmunmap(pkpagetable, TRAMPOLINE, PGSIZE/PGSIZE);
+  ukvmunmap(pkpagetable, (uint64)etext, (PHYSTOP-(uint64)etext)/PGSIZE);
+  ukvmunmap(pkpagetable, KERNBASE, ((uint64)etext-KERNBASE)/PGSIZE);
+  ukvmunmap(pkpagetable, PLIC, 0x400000/PGSIZE);
+  ukvmunmap(pkpagetable, CLINT, 0x10000/PGSIZE);
+  ukvmunmap(pkpagetable, VIRTIO0, PGSIZE/PGSIZE);
+  ukvmunmap(pkpagetable, UART0, PGSIZE/PGSIZE);
+  ukvmfreewalk(pkpagetable);
+}
+
+
+// help user pagetable to user's kernel pagetable
+// 一串helper函数, 来将一段内存映射从pagetable复制到pkpagetable.
+int
+mappages_u2ukvm(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  uint64 a, last;
+  pte_t *pte;
+
+  a = PGROUNDDOWN(va);
+  last = PGROUNDDOWN(va + size - 1);
+
+  for(;;)
+  {
+    if((pte = walk(pagetable, a, 1)) == 0)
+      return -1;
+
+    *pte = PA2PTE(pa) | perm | PTE_V;
+
+    if(a == last)
+      break;
+
+    a += PGSIZE;
+    pa += PGSIZE;
+  }
+
+  return 0;
+}
+
+int
+copypage_u2ukvm(pagetable_t pagetable, pagetable_t pkpagetable , uint64 begin , uint64 end)
+{
+  pte_t * pte ;
+  uint64 pa, i;
+  uint flags;
+  
+  begin = PGROUNDUP(begin);
+
+  for(i = begin ; i < end ; i += PGSIZE)
+  {
+    if((pte = walk(pagetable, i, 0)) == 0)
+      panic("copypage_u2ukvm walk pagetable nullptr");
+
+    if((*pte & PTE_V) == 0)
+      panic("copypage_u2ukvm walk pte not valid");
+
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte) & (~PTE_U); // 把U flag抹去  在内核模式下，无法访问设置了PTE_U的页面
+
+    if (mappages_u2ukvm(pkpagetable, i, PGSIZE, pa, flags) != 0) 
+      goto err;
+  }
+
+  return 0 ;
+
+  err :
+    uvmunmap(pkpagetable, 0, i / PGSIZE, 1);
     return -1;
-  }
 }
