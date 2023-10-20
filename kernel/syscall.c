@@ -32,7 +32,7 @@ fetchstr(uint64 addr, char *buf, int max)
 }
 
 static uint64
-argraw(int n)
+argraw(int n)  // 检索相应的保存的用户寄存器
 {
   struct proc *p = myproc();
   switch (n) {

@@ -319,6 +319,15 @@ sfence_vma()
   asm volatile("sfence.vma zero, zero");
 }
 
+// This function uses inline assembly to read s0
+static inline uint64
+r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, s0" : "=r" (x) );
+  return x;
+}
+
 
 #define PGSIZE 4096 // bytes per page
 #define PGSHIFT 12  // bits of offset within a page
@@ -352,3 +361,4 @@ sfence_vma()
 
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t; // 512 PTEs
+

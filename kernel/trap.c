@@ -43,12 +43,12 @@ usertrap(void)
 
   // send interrupts and exceptions to kerneltrap(),
   // since we're now in the kernel.
-  w_stvec((uint64)kernelvec);
+  w_stvec((uint64)kernelvec);  // 取决于trap是来自于用户空间还是内核空间
 
-  struct proc *p = myproc();
+  struct proc *p = myproc(); // 需要知道当前运行的是什么进程
   
   // save user program counter.
-  p->trapframe->epc = r_sepc();
+  p->trapframe->epc = r_sepc(); // 要保存用户程序计数器，它仍然保存在SEPC寄存器中
   
   if(r_scause() == 8){
     // system call
@@ -62,7 +62,7 @@ usertrap(void)
 
     // an interrupt will change sstatus &c registers,
     // so don't enable until done with those registers.
-    intr_on();
+    intr_on(); // 显式的打开中断
 
     syscall();
   } else if((which_dev = devintr()) != 0){
@@ -87,7 +87,7 @@ usertrap(void)
 // return to user space
 //
 void
-usertrapret(void)
+usertrapret(void)  // 返回到用户空间
 {
   struct proc *p = myproc();
 
@@ -103,7 +103,7 @@ usertrapret(void)
   // the process next re-enters the kernel.
   p->trapframe->kernel_satp = r_satp();         // kernel page table
   p->trapframe->kernel_sp = p->kstack + PGSIZE; // process's kernel stack
-  p->trapframe->kernel_trap = (uint64)usertrap;
+  p->trapframe->kernel_trap = (uint64)usertrap;// 存储了usertrap函数的指针
   p->trapframe->kernel_hartid = r_tp();         // hartid for cpuid()
 
   // set up the registers that trampoline.S's sret will use
@@ -116,7 +116,7 @@ usertrapret(void)
   w_sstatus(x);
 
   // set S Exception Program Counter to the saved user pc.
-  w_sepc(p->trapframe->epc);
+  w_sepc(p->trapframe->epc); // 这条指令会将程序计数器设置成SEPC寄存器的值
 
   // tell trampoline.S the user page table to switch to.
   uint64 satp = MAKE_SATP(p->pagetable);
@@ -138,12 +138,12 @@ kerneltrap()
   uint64 sstatus = r_sstatus();
   uint64 scause = r_scause();
   
-  if((sstatus & SSTATUS_SPP) == 0)
+  if((sstatus & SSTATUS_SPP) == 0) // 异常陷阱
     panic("kerneltrap: not from supervisor mode");
   if(intr_get() != 0)
     panic("kerneltrap: interrupts enabled");
 
-  if((which_dev = devintr()) == 0){
+  if((which_dev = devintr()) == 0){  // 检查和处理设备中断
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
     panic("kerneltrap");
