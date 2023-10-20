@@ -113,6 +113,13 @@ found:
     return 0;
   }
 
+// Allocate a alarmframe page. 为这个备份alarmframe分配1页物理空间
+  if((p->alarmframe = (struct trapframe *)kalloc()) == 0)
+  {
+    release(&p->lock);
+    return 0;
+  }
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -127,6 +134,12 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // Zero initializes the alarm releated fields
+  p->alarm_ticks = 0;
+  p->alarm_handler = 0;
+  p->alarm_ticks_last = 0;
+  p->alarm_flag = 0;
+
   return p;
 }
 
@@ -139,8 +152,10 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -150,6 +165,10 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  if (p->alarmframe) // 释放物理内存
+    kfree((void *)p->alarmframe);
+  p->alarmframe = 0;
 }
 
 // Create a user page table for a given process,
@@ -697,3 +716,4 @@ procdump(void)
     printf("\n");
   }
 }
+

@@ -50,7 +50,8 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc(); // 要保存用户程序计数器，它仍然保存在SEPC寄存器中
   
-  if(r_scause() == 8){
+  if(r_scause() == 8)
+  {
     // system call
 
     if(p->killed)
@@ -65,9 +66,15 @@ usertrap(void)
     intr_on(); // 显式的打开中断
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
+
+
+  } 
+  else if((which_dev = devintr()) != 0)
+  {
     // ok
-  } else {
+  } 
+  else 
+  {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
@@ -78,7 +85,19 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
+  {
+    p->alarm_ticks_last += 1 ;
+
+    if(p->alarm_flag == 0 && p->alarm_ticks != 0 && p->alarm_ticks_last == p->alarm_ticks)
+    {
+      p->alarm_flag = 1;
+      *p->alarmframe = *p->trapframe;
+      p->trapframe->epc = (uint64)p->alarm_handler ;
+      p->alarm_ticks_last = 0 ;
+    }
+
     yield();
+  }
 
   usertrapret();
 }

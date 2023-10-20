@@ -102,3 +102,41 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// set an alarm to call the handler function
+// every period ticks
+uint64
+sys_sigalarm(void)
+{
+  struct proc * my_proc = myproc() ;
+
+  uint64 p ;
+  if(argaddr(1, &p) < 0)
+    return -1 ;
+
+  int ticks ;
+  if(argint(0 , &ticks) < 0)
+    return -1 ;
+
+  my_proc->alarm_ticks = ticks ;
+  my_proc->alarm_handler =  (void(*)()) p ;
+  my_proc->alarm_ticks_last = 0 ;
+
+  return 0 ;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  struct proc * my_proc = myproc() ;
+
+  if(my_proc->alarm_flag)
+  {
+    my_proc->alarm_flag = 0 ;
+    *my_proc->trapframe = *my_proc->alarmframe;
+    my_proc->alarm_ticks_last = 0;
+  }
+
+  return 0 ;
+}
+
