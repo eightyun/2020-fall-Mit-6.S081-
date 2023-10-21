@@ -50,11 +50,12 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
-  if(r_scause() == 8){
+  if(r_scause() == 8)
+  {
     // system call
 
     if(p->killed)
-      exit(-1);
+      goto killed;
 
     // sepc points to the ecall instruction,
     // but we want to return to the next instruction.
@@ -65,22 +66,36 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
+  } 
+  else if((which_dev = devintr()) != 0)
+  {
     // ok
-  } else {
+  } 
+  else if(r_scause() == 15 || r_scause() == 13)
+  {
+    if(lazy_validate(p, r_stval() != 0))
+    {
+      p->killed = 1;
+      goto killed;
+    }
+  }
+  else 
+  {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
+    goto killed;
   }
-
-  if(p->killed)
-    exit(-1);
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
     yield();
 
   usertrapret();
+
+  killed:
+  if(p->killed)
+    exit(-1);
 }
 
 //
@@ -152,6 +167,17 @@ kerneltrap()
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
     yield();
+
+   if (scause == 13 || scause == 15)
+    lazy_validate(myproc(), r_stval());
+   
+  else if((which_dev = devintr()) == 0) 
+  {
+    printf("the faulting process is pid=%d\n", myproc()->pid);
+    printf("scause %p\n", scause);
+    printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
+    panic("kerneltrap");
+  }
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.
