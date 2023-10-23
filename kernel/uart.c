@@ -177,14 +177,14 @@ uartgetc(void)
 // arrived, or the uart is ready for more output, or
 // both. called from trap.c.
 void
-uartintr(void)
+uartintr(void)  // 从UART硬件读取所有等待输入的字符，并将它们交给consoleintr
 {
   // read and process incoming characters.
   while(1){
     int c = uartgetc();
     if(c == -1)
       break;
-    consoleintr(c);
+    consoleintr(c);  // 将监视cons.buf中的一整行，将其复制到用户空间，并返回（通过系统调用机制）到用户空间。
   }
 
   // send buffered characters.

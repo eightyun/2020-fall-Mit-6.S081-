@@ -50,7 +50,8 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
-  if(r_scause() == 8){
+  if(r_scause() == 8)
+  {
     // system call
 
     if(p->killed)
@@ -65,9 +66,18 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
+  } 
+  else if (r_scause() == 15)
+  {
+    if (cowalloc(p->pagetable, r_stval()) < 0)  // 试图在一个COW只读页面上进行写操作, 为该进程额外分配复制一页
+      p->killed = 1;
+  }
+  else if((which_dev = devintr()) != 0)
+  {
     // ok
-  } else {
+  } 
+  else 
+  {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
@@ -174,7 +184,7 @@ clockintr()
 // 1 if other device,
 // 0 if not recognized.
 int
-devintr()
+devintr()  // 查看RISC-V的scause寄存器
 {
   uint64 scause = r_scause();
 

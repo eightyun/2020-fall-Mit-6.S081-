@@ -17,7 +17,7 @@ main(void)
   int pid, wpid;
 
   if(open("console", O_RDWR) < 0){
-    mknod("console", CONSOLE, 0);
+    mknod("console", CONSOLE, 0);  // 通过mknod操作创建了console设备
     open("console", O_RDWR);
   }
   dup(0);  // stdout
