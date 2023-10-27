@@ -44,7 +44,7 @@ freerange(void *pa_start, void *pa_end)
 // call to kalloc().  (The exception is when
 // initializing the allocator; see kinit above.)
 void
-kfree(void *pa)
+kfree(void *pa)  // 将一个内存页面添加（push）到空闲列表上
 {
   struct run *r;
 
@@ -66,7 +66,7 @@ kfree(void *pa)
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
 void *
-kalloc(void)
+kalloc(void)   //  从空闲页面列表中取出（pop）一个内存页面
 {
   struct run *r;
 

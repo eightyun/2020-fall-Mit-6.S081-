@@ -514,7 +514,7 @@ sched(void)
     panic("sched interruptible");
 
   intena = mycpu()->intena;
-  swtch(&p->context, &mycpu()->context);
+  swtch(&p->context, &mycpu()->context);  //  切换
   mycpu()->intena = intena;
 }
 
@@ -553,7 +553,7 @@ forkret(void)
 // Atomically release lock and sleep on chan.
 // Reacquires lock when awakened.
 void
-sleep(void *chan, struct spinlock *lk)
+sleep(void *chan, struct spinlock *lk) // sleep将当前进程标记为SLEEPING，然后调用sched释放CPU
 {
   struct proc *p = myproc();
   
@@ -587,7 +587,7 @@ sleep(void *chan, struct spinlock *lk)
 // Wake up all processes sleeping on chan.
 // Must be called without any p->lock.
 void
-wakeup(void *chan)
+wakeup(void *chan) // wakeup查找在给定等待通道上休眠的进程，并将其标记为RUNNABLE
 {
   struct proc *p;
 

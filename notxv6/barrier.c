@@ -1,3 +1,4 @@
+#include <bits/pthreadtypes.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -20,6 +21,7 @@ barrier_init(void)
   assert(pthread_mutex_init(&bstate.barrier_mutex, NULL) == 0);
   assert(pthread_cond_init(&bstate.barrier_cond, NULL) == 0);
   bstate.nthread = 0;
+  bstate.round = 0;
 }
 
 static void 
@@ -30,7 +32,22 @@ barrier()
   // Block until all threads have called barrier() and
   // then increment bstate.round.
   //
+
+  pthread_mutex_lock(&bstate.barrier_mutex); // acquire lock
+   bstate.nthread++;
+
+   if(bstate.nthread == nthread)  // 所有线程已到达
+   {
+    bstate.round++;
+    bstate.nthread = 0;
+    pthread_cond_broadcast(&bstate.barrier_cond);
+  } 
+  else 
+    pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);// 等待其他线程调用pthread_cond_wait时，mutex必须已经持有
   
+
+  // 释放锁
+  pthread_mutex_unlock(&bstate.barrier_mutex);
 }
 
 static void *
@@ -40,7 +57,8 @@ thread(void *xa)
   long delay;
   int i;
 
-  for (i = 0; i < 20000; i++) {
+  for (i = 0; i < 20000; i++) 
+  {
     int t = bstate.round;
     assert (i == t);
     barrier();
@@ -62,17 +80,18 @@ main(int argc, char *argv[])
     fprintf(stderr, "%s: %s nthread\n", argv[0], argv[0]);
     exit(-1);
   }
+
   nthread = atoi(argv[1]);
   tha = malloc(sizeof(pthread_t) * nthread);
   srandom(0);
 
   barrier_init();
 
-  for(i = 0; i < nthread; i++) {
+  for(i = 0; i < nthread; i++) 
     assert(pthread_create(&tha[i], NULL, thread, (void *) i) == 0);
-  }
-  for(i = 0; i < nthread; i++) {
+  
+  for(i = 0; i < nthread; i++) 
     assert(pthread_join(tha[i], &value) == 0);
-  }
+  
   printf("OK; passed\n");
 }
