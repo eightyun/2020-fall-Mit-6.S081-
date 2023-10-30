@@ -45,7 +45,6 @@ barrier()
   else 
     pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);// 等待其他线程调用pthread_cond_wait时，mutex必须已经持有
   
-
   // 释放锁
   pthread_mutex_unlock(&bstate.barrier_mutex);
 }
