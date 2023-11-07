@@ -62,7 +62,7 @@ bzero(int dev, int bno)
 
 // Allocate a zeroed disk block.
 static uint
-balloc(uint dev)
+balloc(uint dev) // 它查找位图中位为零的空闲块。如果balloc找到这样一个块，它将更新位图并返回该块
 {
   int b, bi, m;
   struct buf *bp;
@@ -87,7 +87,7 @@ balloc(uint dev)
 
 // Free a disk block.
 static void
-bfree(int dev, uint b)
+bfree(int dev, uint b) // 找到正确的位图块并清除正确的位
 {
   struct buf *bp;
   int bi, m;
@@ -193,7 +193,7 @@ static struct inode* iget(uint dev, uint inum);
 // Mark it as allocated by  giving it type type.
 // Returns an unlocked but allocated and referenced inode.
 struct inode*
-ialloc(uint dev, short type)
+ialloc(uint dev, short type) // 它一次一个块地遍历磁盘上的索引节点结构体，查找标记为空闲的一个
 {
   int inum;
   struct buf *bp;
@@ -240,7 +240,7 @@ iupdate(struct inode *ip)
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
 static struct inode*
-iget(uint dev, uint inum)
+iget(uint dev, uint inum) // 获取指向inode的指针，修改引用计数  在inode缓存中查找具有所需设备和inode编号的活动条目
 {
   struct inode *ip, *empty;
 
@@ -254,7 +254,7 @@ iget(uint dev, uint inum)
       release(&icache.lock);
       return ip;
     }
-    if(empty == 0 && ip->ref == 0)    // Remember empty slot.
+    if(empty == 0 && ip->ref == 0)    // Remember empty slot. 记录第一个空槽的位置，如果需要分配缓存项，它会使用这个槽
       empty = ip;
   }
 
@@ -330,7 +330,7 @@ iunlock(struct inode *ip)
 // All calls to iput() must be inside a transaction in
 // case it has to free the inode.
 void
-iput(struct inode *ip)
+iput(struct inode *ip) // 释放指向inode的指针，修改引用计数
 {
   acquire(&icache.lock);
 
@@ -380,24 +380,67 @@ bmap(struct inode *ip, uint bn)
   uint addr, *a;
   struct buf *bp;
 
-  if(bn < NDIRECT){
+  if(bn < NDIRECT)
+  {
     if((addr = ip->addrs[bn]) == 0)
       ip->addrs[bn] = addr = balloc(ip->dev);
+
     return addr;
   }
+
   bn -= NDIRECT;
 
-  if(bn < NINDIRECT){
+  if(bn < NINDIRECT)
+  {
     // Load indirect block, allocating if necessary.
     if((addr = ip->addrs[NDIRECT]) == 0)
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
+
     bp = bread(ip->dev, addr);
     a = (uint*)bp->data;
-    if((addr = a[bn]) == 0){
+    if((addr = a[bn]) == 0)
+    {
       a[bn] = addr = balloc(ip->dev);
       log_write(bp);
     }
+
     brelse(bp);
+    return addr;
+  }
+
+  bn -= NINDIRECT ;
+
+  // 二级间接块
+  if(bn < NDINDIRECT)
+  {
+    int le2_idx = bn / NADDR_PER_BLOCK ; // 要查找的块号位于二级间接块中的位置
+    int le1_idx = bn % NADDR_PER_BLOCK ; // 要查找的块号位于一级间接块中的位置
+
+    // 读出位置
+    if((addr = ip->addrs[NDIRECT + 1]) == 0)
+      ip->addrs[NDIRECT + 1] = addr = balloc(ip->dev);
+
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    if((addr = a[le2_idx]) == 0)
+    {
+      a[le2_idx] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+
+    brelse(bp);
+
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[le1_idx]) == 0) 
+    {
+      a[le1_idx] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+
+    brelse(bp);
+
     return addr;
   }
 
@@ -407,29 +450,58 @@ bmap(struct inode *ip, uint bn)
 // Truncate inode (discard contents).
 // Caller must hold ip->lock.
 void
-itrunc(struct inode *ip)
+itrunc(struct inode *ip) // 释放文件的块，将inode的size重置为零
 {
   int i, j;
   struct buf *bp;
   uint *a;
 
-  for(i = 0; i < NDIRECT; i++){
-    if(ip->addrs[i]){
+  for(i = 0; i < NDIRECT; i++)
+  { // 首先释放直接块
+    if(ip->addrs[i])
+    {
       bfree(ip->dev, ip->addrs[i]);
       ip->addrs[i] = 0;
     }
   }
 
-  if(ip->addrs[NDIRECT]){
+  if(ip->addrs[NDIRECT])
+  {
     bp = bread(ip->dev, ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++){
+    for(j = 0; j < NINDIRECT; j++)
+    { // 释放一级间接块中列出的块
       if(a[j])
         bfree(ip->dev, a[j]);
     }
+
+  struct buf * bp1 ;
+  uint * a1 ;
+  if(ip->addrs[NDIRECT + 1])
+  {
+    bp = bread(ip->dev , ip->addrs[NDIRECT + 1]) ;
+    a = (uint *)bp->data ;
+
+    for(i = 0 ; i < NADDR_PER_BLOCK ; i++) // 释放二级间接块中列出的块
+    {
+      if(a[j])
+      {
+          bp1 = bread(ip->dev , a[i]) ;
+          a1 = (uint*)bp1->data ;
+
+          for(j = 0 ; j < NADDR_PER_BLOCK ; j++)
+            if(a1[j])
+              bfree(ip->dev , a1[j]) ;
+
+        brelse(bp1) ;
+        bfree(ip->dev , a[i]) ;
+      }
+    }
+  }  
+
     brelse(bp);
-    bfree(ip->dev, ip->addrs[NDIRECT]);
-    ip->addrs[NDIRECT] = 0;
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]); // 最后释放间接块本身
+    ip->addrs[NDIRECT + 1] = 0;
   }
 
   ip->size = 0;
@@ -439,7 +511,7 @@ itrunc(struct inode *ip)
 // Copy stat information from inode.
 // Caller must hold ip->lock.
 void
-stati(struct inode *ip, struct stat *st)
+stati(struct inode *ip, struct stat *st) // 将inode元数据复制到stat结构体中，该结构通过stat系统调用向用户程
 {
   st->dev = ip->dev;
   st->ino = ip->inum;
@@ -453,7 +525,7 @@ stati(struct inode *ip, struct stat *st)
 // If user_dst==1, then dst is a user virtual address;
 // otherwise, dst is a kernel address.
 int
-readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
+readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)  //首先确保偏移量和计数不超过文件的末尾
 {
   uint tot, m;
   struct buf *bp;
@@ -527,9 +599,9 @@ namecmp(const char *s, const char *t)
 // Look for a directory entry in a directory.
 // If found, set *poff to byte offset of entry.
 struct inode*
-dirlookup(struct inode *dp, char *name, uint *poff)
-{
-  uint off, inum;
+dirlookup(struct inode *dp, char *name, uint *poff) // 在目录中搜索具有给定名称的条目
+{                                          // 如果找到一个，它将返回一个指向相应inode的指针，解开锁定，并将*poff
+  uint off, inum;                   //设置为目录中条目的字节偏移量，以满足调用方希望对其进行编辑的情形
   struct dirent de;
 
   if(dp->type != T_DIR)
@@ -554,7 +626,7 @@ dirlookup(struct inode *dp, char *name, uint *poff)
 
 // Write a new directory entry (name, inum) into the directory dp.
 int
-dirlink(struct inode *dp, char *name, uint inum)
+dirlink(struct inode *dp, char *name, uint inum) // 将给定名称和inode编号的新目录条目写入目录dp
 {
   int off;
   struct dirent de;
@@ -626,7 +698,7 @@ skipelem(char *path, char *name)
 // path element into name, which must have room for DIRSIZ bytes.
 // Must be called inside a transaction since it calls iput().
 static struct inode*
-namex(char *path, int nameiparent, char *name)
+namex(char *path, int nameiparent, char *name)  //
 {
   struct inode *ip, *next;
 
@@ -661,7 +733,7 @@ namex(char *path, int nameiparent, char *name)
 }
 
 struct inode*
-namei(char *path)
+namei(char *path) // 计算path并返回相应的inode
 {
   char name[DIRSIZ];
   return namex(path, 0, name);

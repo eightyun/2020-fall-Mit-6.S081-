@@ -27,7 +27,7 @@ fileinit(void)
 
 // Allocate a file structure.
 struct file*
-filealloc(void)
+filealloc(void) // 扫描文件表以查找未引用的文件（f->ref == 0），并返回一个新的引用
 {
   struct file *f;
 
@@ -45,7 +45,7 @@ filealloc(void)
 
 // Increment ref count for file f.
 struct file*
-filedup(struct file *f)
+filedup(struct file *f)  // 创建重复引用 增加引用计数
 {
   acquire(&ftable.lock);
   if(f->ref < 1)
@@ -57,7 +57,7 @@ filedup(struct file *f)
 
 // Close file f.  (Decrement ref count, close when reaches 0.)
 void
-fileclose(struct file *f)
+fileclose(struct file *f) // 释放引用  将其递减
 {
   struct file ff;
 

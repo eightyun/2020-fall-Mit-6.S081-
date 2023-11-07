@@ -66,7 +66,7 @@ initlog(int dev, struct superblock *sb)
 
 // Copy committed blocks from log to their home location
 static void
-install_trans(int recovering)
+install_trans(int recovering) // 从日志中读取每个块，并将其写入文件系统中的适当位置
 {
   int tail;
 
@@ -100,7 +100,7 @@ read_head(void)
 // This is the true point at which the
 // current transaction commits.
 static void
-write_head(void)
+write_head(void) // 将头块写入磁盘：这是提交点，写入后的崩溃将导致从日志恢复重演事务的写入操作
 {
   struct buf *buf = bread(log.dev, log.start);
   struct logheader *hb = (struct logheader *) (buf->data);
@@ -124,13 +124,13 @@ recover_from_log(void)
 
 // called at the start of each FS system call.
 void
-begin_op(void)
+begin_op(void) // 等待直到日志系统当前未处于提交中，并且直到有足够的未被占用的日志空间来保存此调用的写入
 {
   acquire(&log.lock);
   while(1){
     if(log.committing){
       sleep(&log, &log.lock);
-    } else if(log.lh.n + (log.outstanding+1)*MAXOPBLOCKS > LOGSIZE){
+    } else if(log.lh.n + (log.outstanding+1)*MAXOPBLOCKS > LOGSIZE){ // log.outstanding统计预定了日志空间的系统调用数
       // this op might exhaust log space; wait for commit.
       sleep(&log, &log.lock);
     } else {
@@ -144,7 +144,7 @@ begin_op(void)
 // called at the end of each FS system call.
 // commits if this was the last outstanding operation.
 void
-end_op(void)
+end_op(void) // 首先减少未完成系统调用的计数。如果计数现在为零，则通过调用commit()提交当前事务
 {
   int do_commit = 0;
 
@@ -176,7 +176,7 @@ end_op(void)
 
 // Copy modified blocks from cache to log.
 static void
-write_log(void)
+write_log(void) // 将事务中修改的每个块从缓冲区缓存复制到磁盘上日志槽位中
 {
   int tail;
 
@@ -212,8 +212,8 @@ commit()
 //   log_write(bp)
 //   brelse(bp)
 void
-log_write(struct buf *b)
-{
+log_write(struct buf *b) // 它将块的扇区号记录在内存中，在磁盘上的日志中预定一个槽位
+{                           /// 并调用bpin将缓存固定在block cache中，以防止block cache将其逐出
   int i;
 
   if (log.lh.n >= LOGSIZE || log.lh.n >= log.size - 1)
@@ -228,7 +228,7 @@ log_write(struct buf *b)
   }
   log.lh.block[i] = b->blockno;
   if (i == log.lh.n) {  // Add new block to log?
-    bpin(b);
+    bpin(b); // bpin是通过增加引用计数防止块被换出的，之后需要再调用bunpin
     log.lh.n++;
   }
   release(&log.lock);
